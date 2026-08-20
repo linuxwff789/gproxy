@@ -53,20 +53,23 @@ jobs:
 
       # ── 第 4 步：交叉编译 ──
       - name: Cross-compile gproxy
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          CC_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-          CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++
-          AR_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
-          CARGO_BUILD_TARGET: aarch64-linux-android
         run: |
           # 找到 NDK 路径（setup-android 将其安装在 $ANDROID_HOME/ndk/ 下）
           NDK_VERSION=$(ls $ANDROID_HOME/ndk/ | sort -V | tail -1)
           echo "NDK 版本: $NDK_VERSION"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
           ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/
+
+          # 设置 Rust 交叉编译环境变量（在 bash 里手动 export）
+          export ANDROID_NDK_HOME
+          export CC_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+          export CXX_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++
+          export AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          export CARGO_BUILD_TARGET=aarch64-linux-android
+
+          echo "CC=$CC_aarch64_linux_android"
+          ls -la "$CC_aarch64_linux_android"
 
           # bindgen 需要 libclang
           sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev ninja-build > /dev/null 2>&1
