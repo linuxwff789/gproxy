@@ -55,6 +55,14 @@ jobs:
               pkg update -y
               pkg install -y rust clang cmake binutils git make perl
 
+              # btls-sys 构建 BoringSSL 时硬编码找 aarch64-linux-android-gcc/g++，
+              # Termux 只有 clang，补 symlink
+              ln -sf "$PREFIX/bin/clang" "$PREFIX/bin/aarch64-linux-android-gcc"
+              if [ -e "$PREFIX/bin/clang++" ]; then
+                ln -sf "$PREFIX/bin/clang++" "$PREFIX/bin/aarch64-linux-android-g++"
+              fi
+              ls -la $PREFIX/bin/aarch64-linux-android-* 2>/dev/null || true
+
               echo "==> 开始编译 (可能 20-40 分钟)"
               cd /build
               mkdir -p /build/target && chmod 777 /build/target
