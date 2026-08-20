@@ -18,7 +18,7 @@ permissions:
 jobs:
   build-ndk:
     name: Cross-compile gproxy (aarch64-linux-android) with NDK
-    runs-on: ubuntu-latest   # x86_64 runner + NDK 交叉编译（官方同款）
+    runs-on: ubuntu-latest   # x86_64 runner + NDK 交叉编译
     timeout-minutes: 150
 
     steps:
@@ -46,25 +46,31 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      # ── 第 3 步：安装 Android NDK（btls-sys 编译 BoringSSL 需要）──
-      - uses: android-actions/setup-ndk@v3
+      # ── 第 3 步：安装 Android SDK + NDK（btls-sys 编译 BoringSSL 需要）──
+      - uses: android-actions/setup-android@v3
         with:
-          ndk-version: r27d
+          packages: 'platforms;android-34 ndk;27.2.12479018'
 
       # ── 第 4 步：交叉编译 ──
       - name: Cross-compile gproxy
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          # Rust 交叉编译链接器用 NDK 的 clang
           CC_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
           CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++
           AR_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
           CARGO_BUILD_TARGET: aarch64-linux-android
         run: |
+          # 找到 NDK 路径（setup-android 将其安装在 $ANDROID_HOME/ndk/ 下）
+          NDK_VERSION=$(ls $ANDROID_HOME/ndk/ | sort -V | tail -1)
+          echo "NDK 版本: $NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
+          ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/
+
           # bindgen 需要 libclang
           sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev ninja-build > /dev/null 2>&1
+
           cargo build --release --target aarch64-linux-android
           echo "==> 构建完成"
           cp target/aarch64-linux-android/release/gproxy ./gproxy-termux
@@ -77,3 +83,16 @@ jobs:
           name: gproxy-termux-aarch64
           path: gproxy-termux
           if-no-files-found: error
+
+  # 备用：如果 NDK 的版本号不对，用这个 job 先列出 NDK 版本
+  list-ndk:
+    name: List available NDK versions
+    runs-on: ubuntu-latest
+    if: ${{ false }}  # 默认不运行，手动启用
+    steps:
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'cmdline-tools;latest'
+      - name: List NDK
+        run: |
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --list | grep ndk | head -20
