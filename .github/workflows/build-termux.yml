@@ -1,0 +1,73 @@
+# 用 GitHub Actions (原生 arm64 runner) + termux-docker 编译 Termux 原生 gproxy
+# 使用方法：
+#   1. fork https://github.com/LeenHawk/gproxy
+#   2. 把本文件放到 fork 仓库的 .github/workflows/build-termux.yml
+#   3. Actions 页面手动触发 "Build gproxy for Termux"
+#   4. 跑完下载 artifact，在 Termux 里 chmod +x 运行
+
+name: Build gproxy for Termux
+
+on:
+  workflow_dispatch:        # 手动触发
+  # 也可加 push 触发：push:
+  #   branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-termux:
+    name: Compile Termux-native gproxy (aarch64)
+    runs-on: ubuntu-24.04-arm   # 原生 arm64 runner，跑 aarch64 容器无需 QEMU
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # ── 第 1 步：构建 console 前端（产物由 rust-embed 嵌入二进制）──
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: console/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+
+      - name: Build console (embed)
+        working-directory: console
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # ── 第 2 步：在 Termux 容器里编译 Rust（Termux 原生 bionic 二进制）──
+      - name: Compile in Termux container
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD":/build \
+            termux/termux-docker:aarch64 \
+            bash -c '
+              set -eux
+              echo "==> 更新 Termux 源并安装 Rust"
+              pkg update -y
+              pkg install -y rust clang cmake binutils
+
+              echo "==> 开始编译 (可能 20-40 分钟)"
+              cd /build
+              cargo build --release
+              echo "==> 编译完成"
+              file target/release/gproxy
+            '
+
+      # ── 第 3 步：查看产物信息 ──
+      - name: Show binary info
+        run: file target/release/gproxy
+
+      # ── 第 4 步：上传产物 ──
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: gproxy-termux-aarch64
+          path: target/release/gproxy
+          if-no-files-found: error
