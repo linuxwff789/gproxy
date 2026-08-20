@@ -1,30 +1,30 @@
-# 用 GitHub Actions (原生 arm64 runner) + termux-docker 编译 Termux 原生 gproxy
+# 用 GitHub Actions + Android NDK 交叉编译 gproxy (aarch64-linux-android)
+# 原理：与 gproxy 官方 Android 构建相同（NDK 工具链），但我们保留 section headers
+#       且动态链接 bionic —— Termux 就是 Android bionic 环境，可直接运行。
 # 使用方法：
 #   1. fork https://github.com/LeenHawk/gproxy
 #   2. 把本文件放到 fork 仓库的 .github/workflows/build-termux.yml
 #   3. Actions 页面手动触发 "Build gproxy for Termux"
-#   4. 跑完下载 artifact，在 Termux 里 chmod +x 运行
+#   4. 下载 artifact，在 Termux 里 chmod +x 运行
 
 name: Build gproxy for Termux
 
 on:
   workflow_dispatch:        # 手动触发
-  # 也可加 push 触发：push:
-  #   branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  build-termux:
-    name: Compile Termux-native gproxy (aarch64)
-    runs-on: ubuntu-24.04-arm   # 原生 arm64 runner，跑 aarch64 容器无需 QEMU
-    timeout-minutes: 120
+  build-ndk:
+    name: Cross-compile gproxy (aarch64-linux-android) with NDK
+    runs-on: ubuntu-latest   # x86_64 runner + NDK 交叉编译（官方同款）
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v7
 
-      # ── 第 1 步：构建 console 前端（产物由 rust-embed 嵌入二进制）──
+      # ── 第 1 步：构建 console 前端（rust-embed 嵌入）──
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: console/package.json
@@ -41,43 +41,36 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
-      # ── 第 2 步：在 Termux 容器里编译 Rust（Termux 原生 bionic 二进制）──
-      - name: Compile in Termux container
+      # ── 第 2 步：安装 Rust + Android 目标 ──
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      # ── 第 3 步：安装 Android NDK（btls-sys 编译 BoringSSL 需要）──
+      - uses: android-actions/setup-ndk@v3
+        with:
+          ndk-version: r27d
+
+      # ── 第 4 步：交叉编译 ──
+      - name: Cross-compile gproxy
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          # Rust 交叉编译链接器用 NDK 的 clang
+          CC_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+          CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++
+          AR_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          CARGO_BUILD_TARGET: aarch64-linux-android
         run: |
-          # 挂载目录属主是 runner(uid 1001)，容器内非 root 用户无法写入，先放开权限
-          chmod -R a+rwx "$PWD"
-          docker run --rm --privileged \
-            -v "$PWD":/build \
-            termux/termux-docker:aarch64 \
-            bash -c '
-              set -eux
-              echo "==> 更新 Termux 源并安装 Rust"
-              pkg update -y
-              pkg install -y rust clang cmake binutils git make perl
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/
+          # bindgen 需要 libclang
+          sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev ninja-build > /dev/null 2>&1
+          cargo build --release --target aarch64-linux-android
+          echo "==> 构建完成"
+          cp target/aarch64-linux-android/release/gproxy ./gproxy-termux
+          file gproxy-termux
 
-              # btls-sys 构建 BoringSSL 时硬编码找 aarch64-linux-android-gcc/g++，
-              # Termux 只有 clang，补 symlink
-              ln -sf "$PREFIX/bin/clang" "$PREFIX/bin/aarch64-linux-android-gcc"
-              if [ -e "$PREFIX/bin/clang++" ]; then
-                ln -sf "$PREFIX/bin/clang++" "$PREFIX/bin/aarch64-linux-android-g++"
-              fi
-              ls -la $PREFIX/bin/aarch64-linux-android-* 2>/dev/null || true
-
-              echo "==> 开始编译 (可能 20-40 分钟)"
-              cd /build
-              mkdir -p /build/target && chmod 777 /build/target
-              cargo build --release
-              echo "==> 编译完成"
-              file target/release/gproxy
-              cp target/release/gproxy /build/gproxy-termux
-              file /build/gproxy-termux
-            '
-
-      # ── 第 3 步：查看产物信息 ──
-      - name: Show binary info
-        run: file gproxy-termux
-
-      # ── 第 4 步：上传产物 ──
+      # ── 第 5 步：上传产物 ──
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
