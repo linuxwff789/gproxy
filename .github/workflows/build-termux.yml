@@ -44,6 +44,8 @@ jobs:
       # ── 第 2 步：在 Termux 容器里编译 Rust（Termux 原生 bionic 二进制）──
       - name: Compile in Termux container
         run: |
+          # 挂载目录属主是 runner(uid 1001)，容器内非 root 用户无法写入，先放开权限
+          chmod -R a+rwx "$PWD"
           docker run --rm --privileged \
             -v "$PWD":/build \
             termux/termux-docker:aarch64 \
@@ -55,19 +57,22 @@ jobs:
 
               echo "==> 开始编译 (可能 20-40 分钟)"
               cd /build
+              # target 目录放容器内部，避免挂载目录权限问题
+              export CARGO_TARGET_DIR=/tmp/gproxy-target
               cargo build --release
-              echo "==> 编译完成"
-              file target/release/gproxy
+              echo "==> 编译完成，复制产物回挂载目录"
+              cp /tmp/gproxy-target/release/gproxy /build/gproxy-termux
+              file /build/gproxy-termux
             '
 
       # ── 第 3 步：查看产物信息 ──
       - name: Show binary info
-        run: file target/release/gproxy
+        run: file gproxy-termux
 
       # ── 第 4 步：上传产物 ──
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: gproxy-termux-aarch64
-          path: target/release/gproxy
+          path: gproxy-termux
           if-no-files-found: error
